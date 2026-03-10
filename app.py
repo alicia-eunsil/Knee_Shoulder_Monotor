@@ -17,6 +17,7 @@ st.caption("Daily close-based reversal monitoring dashboard for Korean stocks.")
 config = load_config()
 paths = config["paths"]
 CANDIDATE_DISPLAY_MIN_SCORE = 50
+CANDIDATE_TABLE_HEIGHT = 420
 
 
 def render_candidate_help(title: str, score_label: str, reasons_label: str) -> None:
@@ -94,22 +95,25 @@ def render_candidate_radio_grid(title: str, options: list[str], key_prefix: str)
     with left_col:
         left_selected = st.radio(
             f"{title} 좌측",
-            options=["선택 안함"] + left_chunk,
+            options=left_chunk,
             key=f"{key_prefix}_left",
             label_visibility="collapsed",
         )
     with right_col:
-        right_selected = st.radio(
-            f"{title} 우측",
-            options=["선택 안함"] + right_chunk if right_chunk else ["선택 안함"],
-            key=f"{key_prefix}_right",
-            label_visibility="collapsed",
-        )
+        right_selected = None
+        if right_chunk:
+            right_selected = st.radio(
+                f"{title} 우측",
+                options=right_chunk,
+                index=None,
+                key=f"{key_prefix}_right",
+                label_visibility="collapsed",
+            )
 
-    if left_selected != "선택 안함":
-        return left_selected
-    if right_selected != "선택 안함":
+    if right_selected:
         return right_selected
+    if left_selected:
+        return left_selected
     return limited[0]
 
 
@@ -146,8 +150,12 @@ header_cols[0].metric("Analysis Date", analysis_date)
 header_cols[1].metric("Knee Strong", int((signals_df["knee_grade"] == "Strong").sum()))
 header_cols[2].metric("Shoulder Strong", int((signals_df["shoulder_grade"] == "Strong").sum()))
 
-knee_view = signals_df[signals_df["knee_score"] >= CANDIDATE_DISPLAY_MIN_SCORE].copy()
-shoulder_view = signals_df[signals_df["shoulder_score"] >= CANDIDATE_DISPLAY_MIN_SCORE].copy()
+knee_view = signals_df[signals_df["knee_score"] >= CANDIDATE_DISPLAY_MIN_SCORE].copy().sort_values(
+    ["knee_score", "pct_change"], ascending=[False, False]
+)
+shoulder_view = signals_df[signals_df["shoulder_score"] >= CANDIDATE_DISPLAY_MIN_SCORE].copy().sort_values(
+    ["shoulder_score", "pct_change"], ascending=[False, True]
+)
 
 knee_header_col, knee_help_col = st.columns([20, 1])
 with knee_header_col:
@@ -158,6 +166,7 @@ st.dataframe(
     format_candidate_view(knee_view, "knee_score", "knee_reasons"),
     use_container_width=True,
     hide_index=True,
+    height=CANDIDATE_TABLE_HEIGHT,
 )
 
 shoulder_header_col, shoulder_help_col = st.columns([20, 1])
@@ -169,6 +178,7 @@ st.dataframe(
     format_candidate_view(shoulder_view, "shoulder_score", "shoulder_reasons"),
     use_container_width=True,
     hide_index=True,
+    height=CANDIDATE_TABLE_HEIGHT,
 )
 
 st.subheader("종목 상세")
