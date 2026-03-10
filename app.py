@@ -58,12 +58,14 @@ def render_candidate_help(title: str, score_label: str, reasons_label: str) -> N
 
 def render_validation_help() -> None:
     with st.popover("!"):
-        st.markdown("**Validation 읽는 법**")
-        st.markdown("- 이 표는 과거에 나온 신호가 이후 며칠 뒤 실제로 맞았는지 확인하는 영역입니다.")
-        st.markdown("- `ret_1d`, `ret_3d`, `ret_5d`, `ret_10d`는 신호 발생 후 각각 1일, 3일, 5일, 10일 뒤 수익률입니다.")
-        st.markdown("- `knee_success`는 5일 안에 `+3%` 이상 상승했는지 뜻합니다.")
-        st.markdown("- `shoulder_success`는 5일 안에 `-3%` 이하 하락했는지 뜻합니다.")
-        st.markdown("- 무릎 후보는 수익률이 플러스인지, 어깨 후보는 수익률이 마이너스인지 보면 먼저 빠르게 해석할 수 있습니다.")
+        st.markdown("**예측평가 읽는 법**")
+        st.markdown("- `평가일` > 해당 신호를 평가한 기준 날짜입니다.")
+        st.markdown("- `매수점수` > 무릎 후보 점수입니다. 높을수록 매수 후보 근거가 많이 겹친 상태입니다.")
+        st.markdown("- `매도점수` > 어깨 후보 점수입니다. 높을수록 매도 후보 근거가 많이 겹친 상태입니다.")
+        st.markdown("- `수익률(1일)`, `수익률(3일)`, `수익률(5일)`, `수익률(10일)` > 평가일 이후 각각 1일, 3일, 5일, 10일 뒤 수익률입니다.")
+        st.markdown("- `매수 성공여부` > 5일 안에 `+3%` 이상 상승했는지 뜻합니다.")
+        st.markdown("- `매도 성공여부` > 5일 안에 `-3%` 이하 하락했는지 뜻합니다.")
+        st.markdown("- 해석할 때는 매수 후보는 수익률이 플러스인지, 매도 후보는 수익률이 마이너스인지 먼저 보면 됩니다.")
 
 
 def load_latest_signals(signal_dir: str) -> tuple[pd.DataFrame, str | None]:
