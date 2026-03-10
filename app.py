@@ -273,3 +273,12 @@ if not validation_df.empty:
     st.dataframe(format_validation_view(symbol_validation), use_container_width=True, hide_index=True)
 else:
     st.info("Validation data will appear after enough forward days have accumulated.")
+
+st.markdown(
+    """
+    <div style="text-align:center; color:#6b7280; font-size:12px; margin-top:48px; padding-bottom:16px;">
+        -created by alicia-
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
