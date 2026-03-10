@@ -20,17 +20,27 @@ paths = config["paths"]
 
 def render_candidate_help(title: str, score_label: str, reasons_label: str) -> None:
     with st.popover("!"):
-        st.markdown(f"**{title} columns**")
-        st.markdown("- `symbol`: 종목코드")
-        st.markdown("- `name`: 종목명")
-        st.markdown("- `close`: 분석 기준일 종가")
-        st.markdown("- `pct_change`: 전일 대비 등락률(%)")
-        st.markdown(f"- `{score_label}`: 반전 후보 점수(0~100)")
-        st.markdown(
-            "- `knee_grade` / `shoulder_grade`: `Strong`, `Watch`, `Neutral` 등급"
-        )
-        st.markdown("- `vol_ratio_20`: 당일 거래량 / 20일 평균 거래량")
-        st.markdown(f"- `{reasons_label}`: 점수에 반영된 핵심 이유 요약")
+        st.markdown(f"**{title} 읽는 법**")
+        st.markdown("- `symbol` / `name`: 어떤 종목인지 확인하는 기본 정보입니다.")
+        st.markdown("- `close`: 분석 기준일 종가입니다. 현재 후보를 볼 때 기준 가격으로 생각하면 됩니다.")
+        st.markdown("- `pct_change`: 전일 대비 등락률입니다. 너무 급하게 오른 후보인지, 막 꺾인 후보인지 볼 때 같이 봅니다.")
+        st.markdown(f"- `{score_label}`: 반전 후보 강도입니다. 높을수록 여러 조건이 동시에 맞았다는 뜻입니다.")
+        st.markdown("- `grade`: `Strong`는 우선 확인할 강한 후보, `Watch`는 관찰할 후보, `Neutral`은 우선순위가 낮다는 뜻입니다.")
+        st.markdown("- `vol_ratio_20`: 거래량에 실제 힘이 붙었는지 보는 값입니다. 1보다 크면 평소보다 거래가 많이 붙은 날입니다.")
+        st.markdown(f"- `{reasons_label}`: 왜 이 종목이 후보로 잡혔는지 핵심 근거를 짧게 보여줍니다.")
+
+        if "Knee" in title:
+            st.markdown("**해석 예시**")
+            st.markdown("- `pct_change`가 플러스이고 `close`가 올라오는데 `vol_ratio_20`도 높으면, 단순 기술적 반등보다 실제 매수세가 붙는 반등으로 볼 수 있습니다.")
+            st.markdown("- `knee_score`가 높고 `grade`가 `Strong`면, 저점권 접근, 반등, 거래량, 모멘텀 개선 같은 조건이 많이 겹친 상태입니다.")
+            st.markdown("- `knee_reasons`에 `최근 20일 저점권`, `종가 반등`, `MACD 개선`이 같이 있으면, 하락 흐름이 약해지면서 반전 시도가 나오는 상황으로 해석할 수 있습니다.")
+            st.markdown("- `close`는 후보가 잡힌 기준 가격이므로, 이후 이 가격대 위에서 버티는지 보는 기준점으로 쓰면 됩니다.")
+        else:
+            st.markdown("**해석 예시**")
+            st.markdown("- `pct_change`가 마이너스로 꺾이고 `vol_ratio_20`도 높으면, 단순 쉬어가는 흐름보다 매도 물량이 강하게 나오는지 의심해볼 수 있습니다.")
+            st.markdown("- `shoulder_score`가 높고 `grade`가 `Strong`면, 고점권 접근, 약세 전환, 거래량 이상, 모멘텀 둔화 조건이 많이 겹친 상태입니다.")
+            st.markdown("- `shoulder_reasons`에 `고점권`, `종가 약세`, `MACD 둔화`가 같이 있으면, 상승 힘이 식으면서 꺾이기 시작하는 구간으로 볼 수 있습니다.")
+            st.markdown("- `close`는 약세 후보가 포착된 기준 가격이므로, 이후 이 가격 아래로 더 밀리는지 볼 때 기준점이 됩니다.")
 
 
 def load_latest_signals(signal_dir: str) -> tuple[pd.DataFrame, str | None]:
@@ -63,13 +73,11 @@ if signals_df.empty:
     st.warning("No signal file found yet. Run `python3 run_daily.py` first.")
     st.stop()
 
-header_cols = st.columns(4)
+header_cols = st.columns(3)
 analysis_date = signal_date or "-"
-run_at = signals_df["run_at"].iloc[0] if "run_at" in signals_df.columns and not signals_df.empty else "-"
 header_cols[0].metric("Analysis Date", analysis_date)
 header_cols[1].metric("Knee Strong", int((signals_df["knee_grade"] == "Strong").sum()))
 header_cols[2].metric("Shoulder Strong", int((signals_df["shoulder_grade"] == "Strong").sum()))
-header_cols[3].metric("Run At", run_at)
 
 knee_view = signals_df[signals_df["knee_score"] >= config["runtime"]["signal_threshold"]].copy()
 shoulder_view = signals_df[signals_df["shoulder_score"] >= config["runtime"]["signal_threshold"]].copy()
