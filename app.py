@@ -84,6 +84,18 @@ def format_candidate_view(frame: pd.DataFrame, score_column: str, reasons_column
         ["symbol", "name", "close", "pct_change", score_column, f"{score_column.split('_')[0]}_grade", "vol_ratio_20", reasons_column]
     ].copy()
     view["close"] = pd.to_numeric(view["close"], errors="coerce").map(lambda v: f"{int(v):,}" if pd.notna(v) else "")
+    view = view.rename(
+        columns={
+            "symbol": "종목코드",
+            "name": "종목명",
+            "close": "전일 종가",
+            "pct_change": "전일대비등락률",
+            score_column: "평가점수",
+            f"{score_column.split('_')[0]}_grade": "평가등급",
+            "vol_ratio_20": "거래량",
+            reasons_column: "평가근거",
+        }
+    )
     return view
 
 
