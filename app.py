@@ -10,7 +10,7 @@ from src.knee_shoulder.config import load_config
 from src.knee_shoulder.storage import load_existing_history, load_validation_history
 
 
-st.set_page_config(page_title="Knee Shoulder Monitor", layout="wide")
+st.set_page_config(page_title="Knee Shoulder Monitor", page_icon="🌻", layout="wide")
 st.title("Knee/Shoulder Stock Monitor")
 st.caption("Daily close-based reversal monitoring dashboard for Korean stocks.")
 
