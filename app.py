@@ -286,6 +286,12 @@ if not validation_df.empty:
     else:
         daily_validation = pd.DataFrame()
 
+    if not daily_validation.empty:
+        daily_validation = daily_validation[
+            (pd.to_numeric(daily_validation["knee_score"], errors="coerce") >= CANDIDATE_DISPLAY_MIN_SCORE)
+            | (pd.to_numeric(daily_validation["shoulder_score"], errors="coerce") >= CANDIDATE_DISPLAY_MIN_SCORE)
+        ].copy()
+
     if daily_validation.empty:
         st.info("직전 거래일 기준으로 아직 표시할 예측평가 데이터가 없습니다.")
     else:
