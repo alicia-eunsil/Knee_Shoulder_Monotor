@@ -59,6 +59,7 @@ def render_candidate_help(title: str, score_label: str, reasons_label: str) -> N
 def render_validation_help() -> None:
     with st.popover("!"):
         st.markdown("**예측평가 읽는 법**")
+        st.markdown("- 이 표는 오늘 후보가 아니라, **직전 거래일에 포착된 후보가 오늘 기준으로 어떻게 됐는지** 보는 영역입니다.")
         st.markdown("- `평가일` > 해당 신호를 평가한 기준 날짜입니다.")
         st.markdown("- `매수점수` > 무릎 후보 점수입니다. 높을수록 매수 후보 근거가 많이 겹친 상태입니다.")
         st.markdown("- `매도점수` > 어깨 후보 점수입니다. 높을수록 매도 후보 근거가 많이 겹친 상태입니다.")
@@ -81,6 +82,16 @@ def prepare_history_for_chart(history: pd.DataFrame) -> pd.DataFrame:
     frame["date"] = pd.to_datetime(frame["date"].astype(str), format="%Y%m%d", errors="coerce")
     frame = frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
     return frame
+
+
+def previous_business_date(date_str: str) -> str | None:
+    dt = pd.to_datetime(date_str, format="%Y%m%d", errors="coerce")
+    if pd.isna(dt):
+        return None
+    dt = dt - pd.Timedelta(days=1)
+    while dt.weekday() >= 5:
+        dt = dt - pd.Timedelta(days=1)
+    return dt.strftime("%Y%m%d")
 
 
 def render_candidate_radio_grid(title: str, options: list[str], key_prefix: str) -> str | None:
@@ -269,10 +280,19 @@ with validation_header_col:
 with validation_help_col:
     render_validation_help()
 if not validation_df.empty:
-    symbol_validation = validation_df[validation_df["symbol"] == selected_symbol]
-    st.dataframe(format_validation_view(symbol_validation), use_container_width=True, hide_index=True)
+    previous_eval_date = previous_business_date(analysis_date)
+    if previous_eval_date:
+        daily_validation = validation_df[validation_df["signal_date"].astype(str) == previous_eval_date].copy()
+    else:
+        daily_validation = pd.DataFrame()
+
+    if daily_validation.empty:
+        st.info("직전 거래일 기준으로 아직 표시할 예측평가 데이터가 없습니다.")
+    else:
+        st.caption(f"직전 거래일 기준 예측평가: {previous_eval_date}")
+        st.dataframe(format_validation_view(daily_validation), use_container_width=True, hide_index=True)
 else:
-    st.info("Validation data will appear after enough forward days have accumulated.")
+    st.info("예측평가 데이터가 아직 없습니다.")
 
 st.markdown(
     """
