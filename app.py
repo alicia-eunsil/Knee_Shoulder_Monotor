@@ -42,7 +42,7 @@ st.caption("Daily close-based reversal monitoring dashboard for Korean stocks.")
 
 config = load_config()
 paths = config["paths"]
-CANDIDATE_DISPLAY_MIN_SCORE = 50
+CANDIDATE_DISPLAY_MIN_SCORE = config["runtime"]["signal_threshold"]
 CANDIDATE_TABLE_HEIGHT = 245
 
 

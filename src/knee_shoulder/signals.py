@@ -37,7 +37,7 @@ def score_symbol(history: pd.DataFrame, symbol: str, name: str, thresholds: Sign
 
     if latest["volume"] >= thresholds.min_volume:
         if pd.notna(latest["dist_from_low_20_pct"]) and latest["dist_from_low_20_pct"] <= 3:
-            knee_score += 20
+            knee_score += 15
             knee_reasons.append("최근 20일 저점권")
         if pd.notna(latest["dist_from_high_20_pct"]) and latest["dist_from_high_20_pct"] >= -3:
             shoulder_score += 20
@@ -51,7 +51,7 @@ def score_symbol(history: pd.DataFrame, symbol: str, name: str, thresholds: Sign
             shoulder_reasons.append("종가 약세")
 
         if pd.notna(latest["rsi_14"]) and pd.notna(prev["rsi_14"]) and latest["rsi_14"] > prev["rsi_14"] and latest["rsi_14"] < 45:
-            knee_score += 15
+            knee_score += 10
             knee_reasons.append("RSI 반등")
         if pd.notna(latest["rsi_14"]) and pd.notna(prev["rsi_14"]) and latest["rsi_14"] < prev["rsi_14"] and latest["rsi_14"] > 55:
             shoulder_score += 15
@@ -65,16 +65,16 @@ def score_symbol(history: pd.DataFrame, symbol: str, name: str, thresholds: Sign
             shoulder_reasons.append("MACD 둔화")
 
         if pd.notna(latest["vol_ratio_20"]) and latest["vol_ratio_20"] >= 1.5:
-            knee_score += 15
+            knee_score += 20
             knee_reasons.append("거래량 증가")
-            shoulder_score += 15
+            shoulder_score += 5
             shoulder_reasons.append("거래량 이상")
 
         if pd.notna(latest["ma_20"]) and latest["close"] >= latest["ma_20"] and prev["close"] < prev["ma_20"]:
-            knee_score += 20
+            knee_score += 25
             knee_reasons.append("20일선 회복")
         if pd.notna(latest["ma_20"]) and latest["close"] <= latest["ma_20"] and prev["close"] > prev["ma_20"]:
-            shoulder_score += 20
+            shoulder_score += 5
             shoulder_reasons.append("20일선 이탈")
 
     knee_score = min(knee_score, 100)
