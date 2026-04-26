@@ -200,6 +200,80 @@ def format_validation_view(frame: pd.DataFrame) -> pd.DataFrame:
     return view.rename(columns=existing_map)
 
 
+def format_return(value: float | int | None) -> str:
+    if pd.isna(value):
+        return "-"
+    return f"{float(value):+.2f}%"
+
+
+def format_rate(value: float | int | None) -> str:
+    if pd.isna(value):
+        return "-"
+    return f"{float(value):.1f}%"
+
+
+def prepare_evaluation_frame(validation: pd.DataFrame, analysis_date: str) -> pd.DataFrame:
+    frame = validation[validation["signal_date"].astype(str) < analysis_date].copy()
+    if frame.empty:
+        return frame
+    for column in ["knee_score", "shoulder_score", "ret_1d", "ret_3d", "ret_5d", "ret_10d"]:
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def summarize_side(frame: pd.DataFrame, score_column: str, success_column: str, direction: str) -> dict:
+    candidates = frame[(frame[score_column] >= CANDIDATE_DISPLAY_MIN_SCORE) & frame["ret_5d"].notna()].copy()
+    if candidates.empty:
+        return {"count": 0, "avg_5d": None, "median_5d": None, "success_rate": None, "direction_rate": None}
+
+    returns = candidates["ret_5d"].astype(float)
+    if direction == "up":
+        direction_rate = (returns > 0).mean() * 100
+    else:
+        direction_rate = (returns < 0).mean() * 100
+
+    return {
+        "count": len(candidates),
+        "avg_5d": returns.mean(),
+        "median_5d": returns.median(),
+        "success_rate": candidates[success_column].astype(float).mean() * 100,
+        "direction_rate": direction_rate,
+    }
+
+
+def render_side_summary(title: str, summary: dict, success_label: str, direction_label: str) -> None:
+    st.markdown(f"**{title}**")
+    cols = st.columns(4)
+    cols[0].metric("평가완료", f"{summary['count']}건")
+    cols[1].metric("5일 평균", format_return(summary["avg_5d"]))
+    cols[2].metric("5일 중앙값", format_return(summary["median_5d"]))
+    cols[3].metric(success_label, format_rate(summary["success_rate"]))
+    st.caption(f"{direction_label}: {format_rate(summary['direction_rate'])}")
+
+
+def format_recent_evaluation(frame: pd.DataFrame, side: str) -> pd.DataFrame:
+    score_column = f"{side}_score"
+    success_column = f"{side}_success"
+    filtered = frame[(frame[score_column] >= CANDIDATE_DISPLAY_MIN_SCORE) & frame["ret_5d"].notna()].copy()
+    if filtered.empty:
+        return filtered
+    filtered = filtered.sort_values(["signal_date", score_column], ascending=[False, False]).head(20)
+    filtered["5일 수익률"] = filtered["ret_5d"].map(format_return)
+    filtered["결과"] = filtered[success_column].map(lambda value: "성공" if int(value) == 1 else "미달")
+    return filtered[["signal_date", "symbol", "name", score_column, "ret_1d", "ret_3d", "5일 수익률", "ret_10d", "결과"]].rename(
+        columns={
+            "signal_date": "결정일",
+            "symbol": "종목코드",
+            "name": "종목명",
+            score_column: "점수",
+            "ret_1d": "1일",
+            "ret_3d": "3일",
+            "ret_10d": "10일",
+        }
+    )
+
+
 signals_df, signal_date = load_latest_signals(paths["signal_dir"])
 validation_df = load_validation_history(Path(paths["validation_file"]))
 
@@ -298,22 +372,47 @@ with validation_header_col:
 with validation_help_col:
     render_validation_help()
 if not validation_df.empty:
-    eval_view = validation_df[validation_df["signal_date"].astype(str) < analysis_date].copy()
-    if not eval_view.empty:
-        eval_view = eval_view[
-            (pd.to_numeric(eval_view["knee_score"], errors="coerce") >= CANDIDATE_DISPLAY_MIN_SCORE)
-            | (pd.to_numeric(eval_view["shoulder_score"], errors="coerce") >= CANDIDATE_DISPLAY_MIN_SCORE)
-        ].copy()
-        recent_dates = sorted(eval_view["signal_date"].astype(str).unique())[-5:]
-        eval_view = eval_view[eval_view["signal_date"].astype(str).isin(recent_dates)].copy()
-        eval_view = eval_view.sort_values(["signal_date", "knee_score", "shoulder_score"], ascending=[False, False, False])
+    eval_view = prepare_evaluation_frame(validation_df, analysis_date)
 
     if eval_view.empty:
         st.info("아직 표시할 예측평가 데이터가 없습니다.")
     else:
-        date_text = ", ".join(sorted(eval_view["signal_date"].astype(str).unique(), reverse=True))
-        st.caption(f"최근 평가일 기준 예측평가: {date_text}")
-        st.dataframe(format_validation_view(eval_view), use_container_width=True, hide_index=True)
+        completed_view = eval_view[eval_view["ret_5d"].notna()].copy()
+        if completed_view.empty:
+            st.info("5일 평가가 완료된 후보가 아직 없습니다.")
+        else:
+            knee_summary = summarize_side(completed_view, "knee_score", "knee_success", "up")
+            shoulder_summary = summarize_side(completed_view, "shoulder_score", "shoulder_success", "down")
+
+            summary_col1, summary_col2 = st.columns(2)
+            with summary_col1:
+                render_side_summary("Knee 매수 후보 성과", knee_summary, "+3% 성공률", "5일 플러스 비율")
+            with summary_col2:
+                render_side_summary("Shoulder 경고 후보 성과", shoulder_summary, "-3% 성공률", "5일 하락 비율")
+
+            st.markdown("**최근 완료 결과**")
+            tab_knee, tab_shoulder, tab_raw = st.tabs(["Knee", "Shoulder", "상세"])
+            with tab_knee:
+                recent_knee = format_recent_evaluation(completed_view, "knee")
+                if recent_knee.empty:
+                    st.info("최근 완료된 Knee 평가가 없습니다.")
+                else:
+                    st.dataframe(recent_knee, use_container_width=True, hide_index=True)
+            with tab_shoulder:
+                recent_shoulder = format_recent_evaluation(completed_view, "shoulder")
+                if recent_shoulder.empty:
+                    st.info("최근 완료된 Shoulder 평가가 없습니다.")
+                else:
+                    st.dataframe(recent_shoulder, use_container_width=True, hide_index=True)
+            with tab_raw:
+                raw_view = eval_view[
+                    (eval_view["knee_score"] >= CANDIDATE_DISPLAY_MIN_SCORE)
+                    | (eval_view["shoulder_score"] >= CANDIDATE_DISPLAY_MIN_SCORE)
+                ].copy()
+                recent_dates = sorted(raw_view["signal_date"].astype(str).unique())[-5:]
+                raw_view = raw_view[raw_view["signal_date"].astype(str).isin(recent_dates)].copy()
+                raw_view = raw_view.sort_values(["signal_date", "knee_score", "shoulder_score"], ascending=[False, False, False])
+                st.dataframe(format_validation_view(raw_view), use_container_width=True, hide_index=True)
 else:
     st.info("예측평가 데이터가 아직 없습니다.")
 
