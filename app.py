@@ -44,6 +44,11 @@ config = load_config()
 paths = config["paths"]
 CANDIDATE_DISPLAY_MIN_SCORE = config["runtime"]["signal_threshold"]
 CANDIDATE_TABLE_HEIGHT = 245
+validation_cfg = config.get("validation", {})
+RISK_PER_TRADE_PCT = float(validation_cfg.get("risk_per_trade_pct", 1.0))
+STOP_LOSS_PCT = float(validation_cfg.get("stop_loss_pct", 3.0))
+TARGET_PROFIT_PCT = float(validation_cfg.get("target_profit_pct", 6.0))
+ACCOUNT_SIZE_KRW = int(validation_cfg.get("account_size_krw", 10_000_000))
 
 
 def render_candidate_help(title: str, score_label: str, reasons_label: str) -> None:
@@ -212,14 +217,129 @@ def format_rate(value: float | int | None) -> str:
     return f"{float(value):.1f}%"
 
 
+def format_currency(value: float | int | None) -> str:
+    if pd.isna(value):
+        return "-"
+    return f"{int(value):,}원"
+
+
 def prepare_evaluation_frame(validation: pd.DataFrame, analysis_date: str) -> pd.DataFrame:
     frame = validation[validation["signal_date"].astype(str) < analysis_date].copy()
     if frame.empty:
         return frame
-    for column in ["knee_score", "shoulder_score", "ret_1d", "ret_3d", "ret_5d", "ret_10d"]:
+    for column in [
+        "knee_score",
+        "shoulder_score",
+        "ret_1d",
+        "ret_3d",
+        "ret_5d",
+        "ret_10d",
+        "max_up_5d",
+        "max_dd_5d",
+        "benchmark_ret_5d",
+    ]:
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
+
+
+def calculate_strategy_metrics(candidates: pd.DataFrame, side: str) -> dict:
+    if candidates.empty:
+        return {
+            "count": 0,
+            "win_rate": None,
+            "avg_return": None,
+            "avg_win": None,
+            "avg_loss": None,
+            "payoff": None,
+            "expectancy": None,
+            "max_drawdown": None,
+        }
+
+    strategy_ret = candidates["ret_5d"].astype(float)
+    if side == "shoulder":
+        strategy_ret = -strategy_ret
+    wins = strategy_ret[strategy_ret > 0]
+    losses = strategy_ret[strategy_ret <= 0]
+    avg_win = wins.mean() if not wins.empty else None
+    avg_loss = losses.mean() if not losses.empty else None
+    payoff = None
+    if avg_win is not None and avg_loss is not None and avg_loss != 0:
+        payoff = float(avg_win) / abs(float(avg_loss))
+
+    win_rate = (strategy_ret > 0).mean() * 100
+    expectancy = strategy_ret.mean()
+
+    equity = (1.0 + strategy_ret / 100.0).cumprod()
+    rolling_peak = equity.cummax()
+    drawdown = ((equity / rolling_peak) - 1.0) * 100.0
+    max_drawdown = drawdown.min() if not drawdown.empty else None
+
+    return {
+        "count": len(candidates),
+        "win_rate": win_rate,
+        "avg_return": strategy_ret.mean(),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "payoff": payoff,
+        "expectancy": expectancy,
+        "max_drawdown": max_drawdown,
+    }
+
+
+def build_regime_summary(frame: pd.DataFrame, side: str) -> pd.DataFrame:
+    score_column = f"{side}_score"
+    filtered = frame[(frame[score_column] >= CANDIDATE_DISPLAY_MIN_SCORE) & frame["ret_5d"].notna()].copy()
+    if filtered.empty or "market_regime" not in filtered.columns:
+        return pd.DataFrame()
+
+    def summarize(group: pd.DataFrame) -> pd.Series:
+        metrics = calculate_strategy_metrics(group, side)
+        return pd.Series(
+            {
+                "건수": metrics["count"],
+                "전략평균(5일)": metrics["avg_return"],
+                "승률": metrics["win_rate"],
+                "기대값": metrics["expectancy"],
+                "손익비": metrics["payoff"],
+                "최대낙폭(MDD)": metrics["max_drawdown"],
+            }
+        )
+
+    regime = filtered.groupby("market_regime", dropna=False).apply(summarize).reset_index()
+    return regime.rename(columns={"market_regime": "시장국면"}).sort_values("건수", ascending=False)
+
+
+def build_trade_plan(selected_row: pd.Series) -> dict:
+    close_price = float(selected_row["close"])
+    knee_score = float(selected_row.get("knee_score", 0))
+    shoulder_score = float(selected_row.get("shoulder_score", 0))
+    is_long = knee_score >= CANDIDATE_DISPLAY_MIN_SCORE and knee_score >= shoulder_score
+    direction = "LONG" if is_long else "SHORT"
+
+    if is_long:
+        stop = close_price * (1.0 - STOP_LOSS_PCT / 100.0)
+        target = close_price * (1.0 + TARGET_PROFIT_PCT / 100.0)
+    else:
+        stop = close_price * (1.0 + STOP_LOSS_PCT / 100.0)
+        target = close_price * (1.0 - TARGET_PROFIT_PCT / 100.0)
+
+    risk_per_share = abs(close_price - stop)
+    risk_budget = ACCOUNT_SIZE_KRW * (RISK_PER_TRADE_PCT / 100.0)
+    qty = int(risk_budget // risk_per_share) if risk_per_share > 0 else 0
+    est_loss = qty * risk_per_share
+    est_gain = qty * abs(target - close_price)
+
+    return {
+        "direction": direction,
+        "entry": close_price,
+        "stop": stop,
+        "target": target,
+        "risk_budget": risk_budget,
+        "qty": qty,
+        "est_loss": est_loss,
+        "est_gain": est_gain,
+    }
 
 
 def summarize_side(frame: pd.DataFrame, score_column: str, success_column: str, direction: str) -> dict:
@@ -345,6 +465,19 @@ selected_symbol = selected_option.split(" | ", 1)[0]
 selected_row = signals_df[signals_df["symbol"] == selected_symbol].iloc[0]
 history = load_existing_history(Path(paths["raw_dir"]) / f"{selected_symbol}.csv")
 
+st.markdown("**매매카드 (규칙 기반 제안)**")
+trade_plan = build_trade_plan(selected_row)
+card_cols = st.columns(5)
+card_cols[0].metric("방향", trade_plan["direction"])
+card_cols[1].metric("진입가", format_currency(trade_plan["entry"]))
+card_cols[2].metric("손절가", format_currency(trade_plan["stop"]))
+card_cols[3].metric("목표가", format_currency(trade_plan["target"]))
+card_cols[4].metric("권장수량", f"{trade_plan['qty']:,}주")
+st.caption(
+    f"계좌 {ACCOUNT_SIZE_KRW:,}원, 1회 리스크 {RISK_PER_TRADE_PCT:.1f}% 기준 | "
+    f"예상손실 {int(trade_plan['est_loss']):,}원 | 예상이익 {int(trade_plan['est_gain']):,}원"
+)
+
 if not history.empty:
     history = prepare_history_for_chart(history)
     figure = go.Figure()
@@ -389,6 +522,43 @@ if not validation_df.empty:
                 render_side_summary("Knee 매수 후보 성과", knee_summary, "+3% 성공률", "5일 플러스 비율")
             with summary_col2:
                 render_side_summary("Shoulder 경고 후보 성과", shoulder_summary, "-3% 성공률", "5일 하락 비율")
+
+            st.markdown("**전략 품질 지표 (5일 기준)**")
+            quality_col1, quality_col2 = st.columns(2)
+            knee_candidates = completed_view[completed_view["knee_score"] >= CANDIDATE_DISPLAY_MIN_SCORE].copy()
+            shoulder_candidates = completed_view[completed_view["shoulder_score"] >= CANDIDATE_DISPLAY_MIN_SCORE].copy()
+            knee_quality = calculate_strategy_metrics(knee_candidates, "knee")
+            shoulder_quality = calculate_strategy_metrics(shoulder_candidates, "shoulder")
+
+            with quality_col1:
+                st.markdown("`Knee 전략`")
+                q1 = st.columns(4)
+                q1[0].metric("승률", format_rate(knee_quality["win_rate"]))
+                q1[1].metric("기대값", format_return(knee_quality["expectancy"]))
+                q1[2].metric("손익비", "-" if knee_quality["payoff"] is None else f"{knee_quality['payoff']:.2f}")
+                q1[3].metric("MDD", format_return(knee_quality["max_drawdown"]))
+            with quality_col2:
+                st.markdown("`Shoulder 전략`")
+                q2 = st.columns(4)
+                q2[0].metric("승률", format_rate(shoulder_quality["win_rate"]))
+                q2[1].metric("기대값", format_return(shoulder_quality["expectancy"]))
+                q2[2].metric("손익비", "-" if shoulder_quality["payoff"] is None else f"{shoulder_quality['payoff']:.2f}")
+                q2[3].metric("MDD", format_return(shoulder_quality["max_drawdown"]))
+
+            st.markdown("**시장국면별 성과**")
+            regime_tab1, regime_tab2 = st.tabs(["Knee", "Shoulder"])
+            with regime_tab1:
+                knee_regime = build_regime_summary(completed_view, "knee")
+                if knee_regime.empty:
+                    st.info("Knee 국면별 데이터가 아직 부족합니다.")
+                else:
+                    st.dataframe(knee_regime, use_container_width=True, hide_index=True)
+            with regime_tab2:
+                shoulder_regime = build_regime_summary(completed_view, "shoulder")
+                if shoulder_regime.empty:
+                    st.info("Shoulder 국면별 데이터가 아직 부족합니다.")
+                else:
+                    st.dataframe(shoulder_regime, use_container_width=True, hide_index=True)
 
             st.markdown("**최근 완료 결과**")
             tab_knee, tab_shoulder, tab_raw = st.tabs(["Knee", "Shoulder", "상세"])

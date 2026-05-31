@@ -160,7 +160,13 @@ def main() -> None:
     save_daily_signals(Path(paths["signal_dir"]) / f"{latest_date}_signals.csv", signals_df)
 
     all_signals_df = load_all_signal_files(paths["signal_dir"])
-    new_validation = build_validation_rows(all_signals_df, paths["raw_dir"], validation_config["forward_days"])
+    benchmark_symbol = validation_config.get("benchmark_symbol", "005930")
+    new_validation = build_validation_rows(
+        all_signals_df,
+        paths["raw_dir"],
+        validation_config["forward_days"],
+        benchmark_symbol=benchmark_symbol,
+    )
     validation_path = Path(paths["validation_file"])
     validation_all = new_validation.drop_duplicates(subset=["signal_date", "symbol"]).sort_values(["signal_date", "symbol"])
     save_validation_history(validation_path, validation_all)
