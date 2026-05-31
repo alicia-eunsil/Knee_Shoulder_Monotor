@@ -57,6 +57,15 @@ def resolve_fetch_start_date(raw_path: Path, runtime: dict, end_date_dt: datetim
     return start_dt.strftime("%Y%m%d")
 
 
+def _resolve_latest_market_date(patch_df: pd.DataFrame, fallback_date: str) -> str:
+    if patch_df.empty or "date" not in patch_df.columns:
+        return fallback_date
+    dates = patch_df["date"].dropna().astype(str)
+    if dates.empty:
+        return fallback_date
+    return dates.max()
+
+
 def _compute_intraday_quality(frame: pd.DataFrame) -> dict:
     if frame.empty:
         return {"intraday_quality_score": 0.0, "intraday_close_pos": 0.0, "intraday_trend_pct": 0.0, "intraday_vol_skew": 0.0}
@@ -189,14 +198,14 @@ def main() -> None:
         return
 
     patch_df = pd.concat(patch_rows, ignore_index=True)
-    latest_date = end_date
+    latest_date = _resolve_latest_market_date(patch_df, end_date)
     save_daily_patch(Path(paths["patch_dir"]) / f"{latest_date}_prices.csv", patch_df)
 
     signals_df = pd.DataFrame(signal_rows)
     if signals_df.empty:
         logging.warning("No signals calculated.")
         return
-    signals_df["analysis_date"] = end_date
+    signals_df["analysis_date"] = latest_date
     signals_df["run_at"] = run_at_dt.isoformat(timespec="seconds")
     save_daily_signals(Path(paths["signal_dir"]) / f"{latest_date}_signals.csv", signals_df)
 
