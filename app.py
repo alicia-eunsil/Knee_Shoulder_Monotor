@@ -145,33 +145,13 @@ def render_candidate_radio_grid(title: str, options: list[str], key_prefix: str)
         return None
 
     limited = options[:10]
-    left_chunk = limited[:5]
-    right_chunk = limited[5:10]
-    left_col, right_col = st.columns(2)
-
-    with left_col:
-        left_selected = st.radio(
-            f"{title} 좌측",
-            options=left_chunk,
-            key=f"{key_prefix}_left",
-            label_visibility="collapsed",
-        )
-    with right_col:
-        right_selected = None
-        if right_chunk:
-            right_selected = st.radio(
-                f"{title} 우측",
-                options=right_chunk,
-                index=None,
-                key=f"{key_prefix}_right",
-                label_visibility="collapsed",
-            )
-
-    if right_selected:
-        return right_selected
-    if left_selected:
-        return left_selected
-    return limited[0]
+    selected = st.radio(
+        f"{title} 선택",
+        options=limited,
+        key=f"{key_prefix}_single",
+        label_visibility="collapsed",
+    )
+    return selected
 
 
 def format_candidate_view(frame: pd.DataFrame, score_column: str, reasons_column: str) -> pd.DataFrame:
@@ -1182,14 +1162,23 @@ with selector_col1:
 with selector_col2:
     shoulder_selected = render_candidate_radio_grid("Shoulder Candidate", shoulder_options, "shoulder_candidate_radio")
 
-selected_option = None
+available_sources = []
 if knee_selected:
-    selected_option = knee_selected
-elif shoulder_selected:
-    selected_option = shoulder_selected
-else:
+    available_sources.append("Knee")
+if shoulder_selected:
+    available_sources.append("Shoulder")
+
+if not available_sources:
     st.info("현재 상세 보기로 선택할 후보 종목이 없습니다.")
     st.stop()
+
+detail_source = st.radio(
+    "상세 기준",
+    options=available_sources,
+    horizontal=True,
+    key="detail_source_selector",
+)
+selected_option = knee_selected if detail_source == "Knee" else shoulder_selected
 
 selected_symbol = selected_option.split(" | ", 1)[0]
 selected_row = signals_df[signals_df["symbol"] == selected_symbol].iloc[0]
