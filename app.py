@@ -357,6 +357,7 @@ def build_action_list_with_calibration(
 
     calibration = calibration or {}
     action_multiplier = calibration.get("action_multiplier", {"BUY": 1.0, "SELL": 1.0})
+    action_expectancy = calibration.get("action_expectancy", {"BUY": 0.0, "SELL": 0.0})
     regime_expectancy = calibration.get("regime_expectancy", {})
 
     frame = signals.copy()
@@ -391,10 +392,17 @@ def build_action_list_with_calibration(
     # 1) action-level multiplier from recent realized outcomes
     # 2) market-regime expectancy bonus
     action["action_multiplier"] = action["action"].map(lambda x: float(action_multiplier.get(x, 1.0)))
+    action["action_expectancy"] = action["action"].map(lambda x: float(action_expectancy.get(x, 0.0)))
     action["regime_bonus"] = action["action"].map(
         lambda x: float(regime_expectancy.get((current_regime, x), 0.0))
     )
+    action["expected_return_adj"] = action["action_expectancy"] + action["regime_bonus"]
     action["priority_score"] = action["priority_score_raw"] * action["action_multiplier"] + action["regime_bonus"] * 8.0
+
+    # Gate: do not recommend actions with non-positive adjusted expectancy.
+    action = action[action["expected_return_adj"] > 0].copy()
+    if action.empty:
+        return pd.DataFrame()
 
     action = action.sort_values("priority_score", ascending=False).head(top_n).reset_index(drop=True)
 
@@ -430,7 +438,9 @@ def build_action_list_with_calibration(
             "est_loss",
             "est_gain",
             "action_multiplier",
+            "action_expectancy",
             "regime_bonus",
+            "expected_return_adj",
         ]
     ]
 
@@ -457,31 +467,33 @@ def build_historical_recommendations(signals_all: pd.DataFrame, top_n: int = 6) 
 
 def build_recommendation_calibration(merged_rec: pd.DataFrame) -> dict:
     if merged_rec.empty:
-        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "regime_expectancy": {}}
+        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "action_expectancy": {"BUY": 0.0, "SELL": 0.0}, "regime_expectancy": {}}
     if "signal_date" not in merged_rec.columns:
-        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "regime_expectancy": {}}
+        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "action_expectancy": {"BUY": 0.0, "SELL": 0.0}, "regime_expectancy": {}}
 
     # Use recent window so recommendations adapt to regime shift.
     recent_dates = sorted(merged_rec["signal_date"].astype(str).unique())[-20:]
     recent = merged_rec[merged_rec["signal_date"].astype(str).isin(set(recent_dates))].copy()
     if recent.empty:
-        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "regime_expectancy": {}}
+        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "action_expectancy": {"BUY": 0.0, "SELL": 0.0}, "regime_expectancy": {}}
 
     ret_col = _select_return_column(recent, 10) or _select_return_column(recent, 5)
     if not ret_col:
-        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "regime_expectancy": {}}
+        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "action_expectancy": {"BUY": 0.0, "SELL": 0.0}, "regime_expectancy": {}}
 
     recent = recent[recent[ret_col].notna()].copy()
     if recent.empty:
-        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "regime_expectancy": {}}
+        return {"action_multiplier": {"BUY": 1.0, "SELL": 1.0}, "action_expectancy": {"BUY": 0.0, "SELL": 0.0}, "regime_expectancy": {}}
 
     recent["strategy_ret"] = recent[ret_col].astype(float)
     recent.loc[recent["action"] == "SELL", "strategy_ret"] = -recent.loc[recent["action"] == "SELL", "strategy_ret"]
 
     action_multiplier = {"BUY": 1.0, "SELL": 1.0}
+    action_expectancy = {"BUY": 0.0, "SELL": 0.0}
     for action_name, group in recent.groupby("action", sort=False):
         win_rate = (group["strategy_ret"] > 0).mean() * 100
         expectancy = group["strategy_ret"].mean()
+        action_expectancy[action_name] = float(expectancy)
         # bounded multiplier to avoid unstable jumps
         mult = 1.0 + ((win_rate - 50.0) / 200.0) + (expectancy / 20.0)
         mult = max(0.75, min(1.25, float(mult)))
@@ -492,7 +504,7 @@ def build_recommendation_calibration(merged_rec: pd.DataFrame) -> dict:
         for (regime, action_name), group in recent.groupby(["market_regime", "action"], dropna=False):
             regime_expectancy[(str(regime), action_name)] = float(group["strategy_ret"].mean())
 
-    return {"action_multiplier": action_multiplier, "regime_expectancy": regime_expectancy}
+    return {"action_multiplier": action_multiplier, "action_expectancy": action_expectancy, "regime_expectancy": regime_expectancy}
 
 
 def _select_return_column(frame: pd.DataFrame, preferred_horizon_days: int) -> str | None:
@@ -701,6 +713,8 @@ else:
     quick_view["예상손실"] = quick_view["est_loss"].map(format_currency)
     quick_view["예상이익"] = quick_view["est_gain"].map(format_currency)
     quick_view["권장수량"] = quick_view["qty"].map(lambda v: f"{int(v):,}주")
+    quick_view["최근기대값"] = quick_view["action_expectancy"].map(format_return)
+    quick_view["최종기대수익률"] = quick_view["expected_return_adj"].map(format_return)
     quick_view = quick_view.rename(
         columns={
             "action": "액션",
@@ -725,7 +739,9 @@ else:
                 "전일대비등락률",
                 "거래량비율",
                 "성과보정",
+                "최근기대값",
                 "국면보정",
+                "최종기대수익률",
                 "진입가",
                 "손절가",
                 "목표가",
