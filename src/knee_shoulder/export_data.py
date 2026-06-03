@@ -40,8 +40,12 @@ def _normalize_key(key: str) -> str:
 def clamp_export_month_range(start_month: str, end_month: str, max_years: int = 10) -> tuple[str, str]:
     start = datetime.strptime(str(start_month), "%Y%m")
     end = datetime.strptime(str(end_month), "%Y%m")
-    min_start_year = end.year - max_years
-    min_start = datetime(min_start_year, end.month, 1)
+    max_months = max_years * 12 - 1
+    end_index = end.year * 12 + (end.month - 1)
+    min_start_index = end_index - max_months
+    min_start_year = min_start_index // 12
+    min_start_month = (min_start_index % 12) + 1
+    min_start = datetime(min_start_year, min_start_month, 1)
     if start < min_start:
         start = min_start
     return start.strftime("%Y%m"), end.strftime("%Y%m")
