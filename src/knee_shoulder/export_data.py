@@ -37,6 +37,17 @@ def _normalize_key(key: str) -> str:
     return re.sub(r"[^0-9A-Za-z가-힣]", "", key).lower()
 
 
+def _month_to_index(month: str) -> int:
+    dt = datetime.strptime(str(month), "%Y%m")
+    return dt.year * 12 + (dt.month - 1)
+
+
+def _index_to_month(index: int) -> str:
+    year = index // 12
+    month = (index % 12) + 1
+    return f"{year:04d}{month:02d}"
+
+
 def clamp_export_month_range(start_month: str, end_month: str, max_years: int = 10) -> tuple[str, str]:
     start = datetime.strptime(str(start_month), "%Y%m")
     end = datetime.strptime(str(end_month), "%Y%m")
@@ -143,23 +154,36 @@ def fetch_export_trend_history(
     page_no: int = 1,
     num_rows: int = 1000,
 ) -> pd.DataFrame:
-    url = f"{auth.base_url.rstrip('/')}/{auth.endpoint.lstrip('/')}"
     start_month, end_month = clamp_export_month_range(start_month, end_month)
-    params = {
-        "serviceKey": auth.service_key,
-        "pageNo": page_no,
-        "numOfRows": num_rows,
-        "type": "xml",
-        "strtYymm": start_month,
-        "endYymm": end_month,
-    }
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-    rows = _parse_xml_items(response.text)
-    if not rows:
-        snippet = re.sub(r"\s+", " ", response.text)[:500]
-        raise ValueError(
-            f"Public data API returned no rows. status={response.status_code} content_type={response.headers.get('content-type', '')} "
-            f"snippet={snippet}"
-        )
-    return _normalize_rows(rows)
+    start_idx = _month_to_index(start_month)
+    end_idx = _month_to_index(end_month)
+    frames: list[pd.DataFrame] = []
+    url = f"{auth.base_url.rstrip('/')}/{auth.endpoint.lstrip('/')}"
+
+    for month_idx in range(start_idx, end_idx + 1):
+        month = _index_to_month(month_idx)
+        params = {
+            "serviceKey": auth.service_key,
+            "pageNo": page_no,
+            "numOfRows": num_rows,
+            "type": "xml",
+            "strtYymm": month,
+            "endYymm": month,
+        }
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        rows = _parse_xml_items(response.text)
+        if not rows:
+            snippet = re.sub(r"\s+", " ", response.text)[:500]
+            raise ValueError(
+                f"Public data API returned no rows for month={month}. "
+                f"status={response.status_code} content_type={response.headers.get('content-type', '')} "
+                f"snippet={snippet}"
+            )
+        frames.append(_normalize_rows(rows))
+
+    if not frames:
+        return pd.DataFrame()
+    frame = pd.concat(frames, ignore_index=True)
+    frame = frame.drop_duplicates(subset=["월별", "기간"], keep="last").sort_values(["월별", "기간"]).reset_index(drop=True)
+    return frame
