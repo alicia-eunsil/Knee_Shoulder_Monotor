@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import unquote
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -236,6 +237,7 @@ def load_or_refresh_export_history(force_refresh: bool = False) -> pd.DataFrame:
         or st.secrets.get("DATA_GO_KR_SERVICE_KEY")
     )
     if not service_key:
+        st.session_state["export_refresh_status"] = "missing_key"
         return frame
 
     export_auth = ExportApiAuth(
@@ -243,26 +245,46 @@ def load_or_refresh_export_history(force_refresh: bool = False) -> pd.DataFrame:
         base_url=str(export_cfg.get("base_url", "https://apis.data.go.kr/1220000/prlstMmUtPrviExpAcrs")),
         endpoint=str(export_cfg.get("endpoint", "getPrlstMmUtPrviExpAcrs")),
     )
-    try:
-        fetched = fetch_export_trend_history(
-            export_auth,
-            start_month=str(export_cfg.get("start_month", "201601")),
-            end_month=pd.Timestamp.now().strftime("%Y%m"),
-            num_rows=int(export_cfg.get("num_rows", 1000)),
-        )
-    except Exception:  # noqa: BLE001
-        return frame
+    start_month = str(export_cfg.get("start_month", "201601"))
+    end_month = pd.Timestamp.now().strftime("%Y%m")
+    num_rows = int(export_cfg.get("num_rows", 1000))
+    key_variants = [service_key]
+    decoded_key = unquote(service_key)
+    if decoded_key not in key_variants:
+        key_variants.append(decoded_key)
+
+    fetched = pd.DataFrame()
+    last_error: str | None = None
+    for candidate_key in key_variants:
+        export_auth.service_key = candidate_key
+        try:
+            fetched = fetch_export_trend_history(
+                export_auth,
+                start_month=start_month,
+                end_month=end_month,
+                num_rows=num_rows,
+            )
+            if not fetched.empty:
+                st.session_state["export_refresh_status"] = "ok"
+                break
+            last_error = "empty_response"
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            continue
 
     if fetched.empty:
+        st.session_state["export_refresh_status"] = f"failed:{last_error or 'unknown'}"
         return frame
 
     if frame.empty:
         save_export_trend_history(EXPORT_TREND_PATH, fetched)
+        st.session_state["export_refresh_status"] = "ok"
         return fetched
 
     combined = pd.concat([frame, fetched], ignore_index=True)
     combined = combined.drop_duplicates(subset=["월별", "기간"], keep="last").sort_values(["월별", "기간"]).reset_index(drop=True)
     save_export_trend_history(EXPORT_TREND_PATH, combined)
+    st.session_state["export_refresh_status"] = "ok"
     return combined
 
 
@@ -1372,7 +1394,13 @@ export_df = load_or_refresh_export_history(force_refresh=refresh_clicked)
 export_df = prepare_export_frame(export_df)
 
 if export_df.empty:
-    st.info("수출 추이 데이터가 아직 없습니다. `DATA_GO_KR_SERVICE_KEY`를 설정하고 `python3 run_daily.py`를 실행하세요.")
+    status = st.session_state.get("export_refresh_status")
+    if status == "missing_key":
+        st.info("수출 추이 데이터가 아직 없습니다. `DATA_GO_KR_SERVICE_KEY`를 확인하세요.")
+    elif isinstance(status, str) and status.startswith("failed:"):
+        st.warning(f"수출 API 호출 실패: {status.removeprefix('failed:')}")
+    else:
+        st.info("수출 추이 데이터가 아직 없습니다. `DATA_GO_KR_SERVICE_KEY`를 설정하고 `python3 run_daily.py`를 실행하세요.")
 else:
     period_order = [period for period in ["01~10", "01~20", "01~31"] if period in set(export_df["기간"].astype(str))]
     if not period_order:
